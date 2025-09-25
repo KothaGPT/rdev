@@ -14,10 +14,20 @@ use winapi::um::winuser::{
     SetWindowsHookExA, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, WHEEL_DELTA, WH_KEYBOARD_LL, WH_MOUSE_LL,
     WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
     WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN,
-    WM_XBUTTONUP,
+    WM_XBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 pub const TRUE: i32 = 1;
 pub const FALSE: i32 = 0;
+
+// Low-level keyboard hook flags from KBDLLHOOKSTRUCT.flags
+const LLKHF_EXTENDED: DWORD = 0x01;
+const LLKHF_INJECTED: DWORD = 0x10;
+const LLKHF_ALTDOWN: DWORD = 0x20;
+const LLKHF_UP: DWORD = 0x80;
+
+// Low-level mouse hook flags from MSLLHOOKSTRUCT.flags
+const LLMHF_INJECTED: DWORD = 0x01;
+const LLMHF_LOWER_IL_INJECTED: DWORD = 0x02;
 
 pub static mut HOOK: HHOOK = null_mut();
 lazy_static! {
@@ -31,6 +41,10 @@ pub unsafe fn get_code(lpdata: LPARAM) -> DWORD {
 pub unsafe fn get_scan_code(lpdata: LPARAM) -> DWORD {
     let kb = *(lpdata as *const KBDLLHOOKSTRUCT);
     kb.scanCode
+}
+pub unsafe fn get_flags(lpdata: LPARAM) -> DWORD {
+    let kb = *(lpdata as *const KBDLLHOOKSTRUCT);
+    kb.flags
 }
 pub unsafe fn get_point(lpdata: LPARAM) -> (LONG, LONG) {
     let mouse = *(lpdata as *const MSLLHOOKSTRUCT);
@@ -47,8 +61,35 @@ pub unsafe fn get_button_code(lpdata: LPARAM) -> WORD {
     let mouse = *(lpdata as *const MSLLHOOKSTRUCT);
     HIWORD(mouse.mouseData)
 }
+pub unsafe fn get_mouse_flags(lpdata: LPARAM) -> DWORD {
+    let mouse = *(lpdata as *const MSLLHOOKSTRUCT);
+    mouse.flags
+}
 
 pub unsafe fn convert(param: WPARAM, lpdata: LPARAM) -> Option<EventType> {
+    // Universal injection filtering - reject ALL injected events (keyboard and mouse)
+    // For real hardware input only, no synthetic/programmatic events
+    match param.try_into() {
+        // Check keyboard events for injection
+        Ok(WM_KEYDOWN) | Ok(WM_KEYUP) | Ok(WM_SYSKEYDOWN) | Ok(WM_SYSKEYUP) => {
+            let flags = get_flags(lpdata);
+            if (flags & LLKHF_INJECTED) != 0 {
+                return None; // Reject ALL injected keyboard events
+            }
+        }
+        // Check mouse events for injection
+        Ok(WM_LBUTTONDOWN) | Ok(WM_LBUTTONUP) | Ok(WM_MBUTTONDOWN) | Ok(WM_MBUTTONUP) |
+        Ok(WM_RBUTTONDOWN) | Ok(WM_RBUTTONUP) | Ok(WM_XBUTTONDOWN) | Ok(WM_XBUTTONUP) |
+        Ok(WM_MOUSEMOVE) | Ok(WM_MOUSEWHEEL) | Ok(WM_MOUSEHWHEEL) => {
+            let flags = get_mouse_flags(lpdata);
+            if (flags & LLMHF_INJECTED) != 0 {
+                return None; // Reject ALL injected mouse events
+            }
+        }
+        _ => {}
+    }
+
+    // Now process the events normally (all injected events already filtered out)
     match param.try_into() {
         Ok(WM_KEYDOWN) => {
             let code = get_code(lpdata);
@@ -61,24 +102,16 @@ pub unsafe fn convert(param: WPARAM, lpdata: LPARAM) -> Option<EventType> {
             Some(EventType::KeyRelease(key))
         }
         Ok(WM_SYSKEYDOWN) => {
+            // Process ALL system keys (already filtered for injection above)
             let code = get_code(lpdata);
-            // Only process Alt (18) and AltGr (225) system key events
-            if code == 164 || code == 165 {
-                let key = key_from_code(code as u16);
-                Some(EventType::KeyPress(key))
-            } else {
-                None // Ignore other system keys
-            }        
+            let key = key_from_code(code as u16);
+            Some(EventType::KeyPress(key))
         }
         Ok(WM_SYSKEYUP) => {
+            // Process ALL system keys (already filtered for injection above)
             let code = get_code(lpdata);
-            // Only process Alt (18) and AltGr (225) system key events
-            if code == 164 || code == 165 {
-                let key = key_from_code(code as u16);
-                Some(EventType::KeyRelease(key))
-            } else {
-                None // Ignore other system keys
-            }        
+            let key = key_from_code(code as u16);
+            Some(EventType::KeyRelease(key))
         }
         Ok(WM_LBUTTONDOWN) => Some(EventType::ButtonPress(Button::Left)),
         Ok(WM_LBUTTONUP) => Some(EventType::ButtonRelease(Button::Left)),
