@@ -67,7 +67,6 @@ decl_keycodes! {
     Home, 36,
     LeftArrow, 37,
     MetaLeft, 91,
-    MetaRight, 92,
     PageDown, 34,
     PageUp, 33,
     Return, 0x0D,
@@ -145,13 +144,7 @@ decl_keycodes! {
     Kp7, 103,
     Kp8, 104,
     Kp9, 105,
-    KpDelete, 110,
-    VolumeMute, 173,
-    VolumeDown, 174,
-    VolumeUp, 175,
-    NextTrack, 176,
-    PreviousTrack, 177,
-    PlayPause, 179
+    KpDelete, 110
 }
 
 #[cfg(test)]
@@ -164,7 +157,7 @@ mod test {
             if let Some(code2) = code_from_key(key) {
                 assert_eq!(code, code2)
             } else {
-                panic!("We could not convert back code: {:?}", code);
+                assert!(false, "We could not convert back code: {:?}", code);
             }
         }
     }
